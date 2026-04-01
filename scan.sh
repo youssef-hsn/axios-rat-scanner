@@ -5,9 +5,9 @@ FOUND=0
 echo "🔍 Scanning: $PROJECTS_DIR"
 echo "========================================"
 
-# Step 1a: Check package-lock.json (npm)
+# Step 1: Check package-lock.json (npm)
 echo ""
-echo "[ 1/4 ] Checking package-lock.json for malicious axios (npm)..."
+echo "[ 1/6 ] Checking package-lock.json for malicious axios (npm)..."
 while IFS= read -r -d '' lockfile; do
   dir=$(dirname "$lockfile")
   match=$(grep -A1 '"axios"' "$lockfile" 2>/dev/null | grep -E "1\.14\.1|0\.30\.4")
@@ -18,9 +18,9 @@ while IFS= read -r -d '' lockfile; do
   fi
 done < <(find "$PROJECTS_DIR" -name "package-lock.json" -not -path "*/node_modules/*" -print0)
 
-# Step 1b: Check pnpm-lock.yaml (pnpm)
+# Step 2: Check pnpm-lock.yaml (pnpm)
 echo ""
-echo "[ 2/4 ] Checking pnpm-lock.yaml for malicious axios (pnpm)..."
+echo "[ 2/6 ] Checking pnpm-lock.yaml for malicious axios (pnpm)..."
 while IFS= read -r -d '' lockfile; do
   dir=$(dirname "$lockfile")
   match=$(grep -E "axios@.*1\.14\.1|axios@.*0\.30\.4|/axios@1\.14\.1|/axios@0\.30\.4" "$lockfile" 2>/dev/null)
@@ -31,17 +31,52 @@ while IFS= read -r -d '' lockfile; do
   fi
 done < <(find "$PROJECTS_DIR" -name "pnpm-lock.yaml" -not -path "*/node_modules/*" -print0)
 
-# Step 2: Check for plain-crypto-js directory (both npm and pnpm layouts)
+# Step 3: Check yarn.lock (Yarn classic + Berry)
 echo ""
-echo "[ 3/4 ] Checking for plain-crypto-js in node_modules..."
+echo "[ 3/6 ] Checking yarn.lock for malicious axios (yarn)..."
+while IFS= read -r -d '' lockfile; do
+  dir=$(dirname "$lockfile")
+  # Classic: resolved .../axios-1.14.1.tgz — Berry: axios@npm:1.14.1 / "axios@npm:1.14.1"
+  match=$(grep -E 'axios-1\.14\.1\.tgz|axios-0\.30\.4\.tgz|axios@npm:1\.14\.1|axios@npm:0\.30\.4|"axios@npm:1\.14\.1"|"axios@npm:0\.30\.4"' "$lockfile" 2>/dev/null)
+  if [ -n "$match" ]; then
+    echo "  ❌ FOUND in: $dir"
+    echo "     $match"
+    FOUND=1
+  fi
+done < <(find "$PROJECTS_DIR" -name "yarn.lock" -not -path "*/node_modules/*" -print0)
+
+# Step 4: Check bun.lock (text) and bun.lockb (binary)
+echo ""
+echo "[ 4/6 ] Checking bun.lock / bun.lockb for malicious axios (bun)..."
+while IFS= read -r -d '' lockfile; do
+  dir=$(dirname "$lockfile")
+  case "$lockfile" in
+    *.lockb)
+      # Binary lockfile: scan as text for embedded version strings
+      match=$(grep -a -E 'axios@(1\.14\.1|0\.30\.4)([^0-9.]|$)|axios/1\.14\.1|axios/0\.30\.4|"axios".*1\.14\.1|"axios".*0\.30\.4' "$lockfile" 2>/dev/null)
+      ;;
+    *)
+      match=$(grep -A3 '"axios"' "$lockfile" 2>/dev/null | grep -E "1\.14\.1|0\.30\.4")
+      ;;
+  esac
+  if [ -n "$match" ]; then
+    echo "  ❌ FOUND in: $dir"
+    echo "     $match"
+    FOUND=1
+  fi
+done < <(find "$PROJECTS_DIR" \( -name "bun.lock" -o -name "bun.lockb" \) -not -path "*/node_modules/*" -print0)
+
+# Step 5: Check for plain-crypto-js directory
+echo ""
+echo "[ 5/6 ] Checking for plain-crypto-js in node_modules..."
 while IFS= read -r dir; do
   echo "  ❌ DROPPER RAN in: $dir"
   FOUND=1
 done < <(find "$PROJECTS_DIR" -type d -name "plain-crypto-js" -path "*/node_modules/*" 2>/dev/null)
 
-# Step 3: Check for RAT artifact
+# Step 6: Check for RAT artifact
 echo ""
-echo "[ 4/4 ] Checking for macOS RAT artifact..."
+echo "[ 6/6 ] Checking for macOS RAT artifact..."
 if [ -f "/Library/Caches/com.apple.act.mond" ]; then
   echo "  ❌ RAT BINARY FOUND: /Library/Caches/com.apple.act.mond"
   ls -la /Library/Caches/com.apple.act.mond
@@ -60,7 +95,7 @@ else
   echo "  1. Treat affected machines as fully compromised"
   echo "  2. Rotate ALL credentials (npm, AWS, SSH keys, .env secrets, CI/CD tokens)"
   echo "  3. Remove the RAT: rm -f /Library/Caches/com.apple.act.mond"
-  echo "  4. Downgrade axios: npm install axios@1.14.0  OR  pnpm add axios@1.14.0"
+  echo "  4. Downgrade axios: npm install axios@1.14.0  |  pnpm add axios@1.14.0  |  yarn add axios@1.14.0  |  bun add axios@1.14.0"
   echo "  5. Remove the package: rm -rf <project>/node_modules/plain-crypto-js"
-  echo "  6. Reinstall safely: npm ci --ignore-scripts  OR  pnpm install --ignore-scripts"
+  echo "  6. Reinstall safely: npm ci --ignore-scripts  |  pnpm install --ignore-scripts  |  yarn install --ignore-scripts  |  bun install --ignore-scripts"
 fi
