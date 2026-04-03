@@ -10,6 +10,28 @@ function Test-OutsideNodeModules {
     $FullName -notmatch '[\\/]node_modules[\\/]'
 }
 
+# Match only when the target version appears close to an axios key line
+# (parity with scan.sh's constrained grep context behavior).
+function Find-AxiosVersionNearKey {
+    param(
+        [string[]]$Lines,
+        [int]$LookAhead = 1
+    )
+
+    for ($i = 0; $i -lt $Lines.Count; $i++) {
+        if ($Lines[$i] -match '"axios"') {
+            $end = [Math]::Min($i + $LookAhead, $Lines.Count - 1)
+            for ($j = $i; $j -le $end; $j++) {
+                if ($Lines[$j] -match '(?<![\d.])(1\.14\.1|0\.30\.4)(?![\d.])') {
+                    return $Matches[1]
+                }
+            }
+        }
+    }
+
+    return $null
+}
+
 Write-Host "`nScanning: $ProjectsDir" -ForegroundColor Cyan
 Write-Host "========================================"
 
@@ -18,11 +40,12 @@ Write-Host "`n[ 1/6 ] Checking package-lock.json for malicious axios (npm)..."
 Get-ChildItem -Path $ProjectsDir -Recurse -Filter "package-lock.json" -File -ErrorAction SilentlyContinue |
     Where-Object { Test-OutsideNodeModules $_.FullName } |
     ForEach-Object {
-        $content = Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue
-        if ($content -match '"axios"[\s\S]*?(1\.14\.1|0\.30\.4)') {
+        $lines = Get-Content $_.FullName -ErrorAction SilentlyContinue
+        $matchedVersion = Find-AxiosVersionNearKey -Lines $lines -LookAhead 1
+        if ($matchedVersion) {
             $dir = $_.DirectoryName
             Write-Host "  FOUND in: $dir" -ForegroundColor Red
-            Write-Host "     Matched version: $($Matches[1])" -ForegroundColor Red
+            Write-Host "     Matched version: $matchedVersion" -ForegroundColor Red
             $script:Found = 1
         }
     }
@@ -33,7 +56,7 @@ Get-ChildItem -Path $ProjectsDir -Recurse -Filter "pnpm-lock.yaml" -File -ErrorA
     Where-Object { Test-OutsideNodeModules $_.FullName } |
     ForEach-Object {
         $content = Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue
-        if ($content -match 'axios@.*(1\.14\.1|0\.30\.4)|/axios@(1\.14\.1|0\.30\.4)') {
+        if ($content -match 'axios@.*(?<![\d.])(1\.14\.1|0\.30\.4)(?![\d.])|/axios@(?<![\d.])(1\.14\.1|0\.30\.4)(?![\d.])') {
             $dir = $_.DirectoryName
             Write-Host "  FOUND in: $dir" -ForegroundColor Red
             Write-Host "     Matched: $($Matches[0])" -ForegroundColor Red
@@ -48,7 +71,7 @@ Get-ChildItem -Path $ProjectsDir -Recurse -Filter "yarn.lock" -File -ErrorAction
     ForEach-Object {
         $content = Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue
         # Classic: .../axios-1.14.1.tgz — Berry: axios@npm:1.14.1 / "axios@npm:1.14.1"
-        if ($content -match 'axios-1\.14\.1\.tgz|axios-0\.30\.4\.tgz|axios@npm:1\.14\.1|axios@npm:0\.30\.4|"axios@npm:1\.14\.1"|"axios@npm:0\.30\.4"') {
+        if ($content -match 'axios-1\.14\.1\.tgz|axios-0\.30\.4\.tgz|axios@npm:1\.14\.1(?![\d.])|axios@npm:0\.30\.4(?![\d.])|"axios@npm:1\.14\.1(?![\d.])"|"axios@npm:0\.30\.4(?![\d.])"') {
             $dir = $_.DirectoryName
             Write-Host "  FOUND in: $dir" -ForegroundColor Red
             Write-Host "     Matched: $($Matches[0])" -ForegroundColor Red
@@ -81,10 +104,11 @@ Write-Host "`n[ 4/6 ] Checking bun.lock / bun.lockb for malicious axios (bun)...
             }
         }
         else {
-            $content = Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue
-            if ($content -match '"axios"[\s\S]*?(1\.14\.1|0\.30\.4)') {
+            $lines = Get-Content $_.FullName -ErrorAction SilentlyContinue
+            $matchedVersion = Find-AxiosVersionNearKey -Lines $lines -LookAhead 3
+            if ($matchedVersion) {
                 $hit = $true
-                $matched = "version: $($Matches[1])"
+                $matched = "version: $matchedVersion"
             }
         }
         if ($hit) {
